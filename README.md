@@ -19,7 +19,7 @@ $ sls invoke local --function auth0_handler
 """
 $ sls deploy
 """
-*** NOTE ***
+## *** NOTE ***
 """
 Make sure to make env.yml in the root directory before deploying to aws and set your environment variables according as env.example 
 """

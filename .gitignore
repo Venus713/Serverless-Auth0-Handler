@@ -52,3 +52,6 @@ env.yml
 .idea
 venv/
 test.py
+.vscode/
+__pycache__/
+src/__pycache__/

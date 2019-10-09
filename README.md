@@ -1,25 +1,25 @@
-# Trial of serverless to handle s3
+# Serverless-Auth0-Handler
 
 ## Install dependences
-### Node dependencies for sls
-```
+### Node dependencies for Serverless
+"""
 $ npm install
-```
+"""
 ### Python dependences
-```
+"""
 $ pip install -r requirements.txt
-```
+"""
 
 ## How to deploy the solution
 ### Test on local
-```
-$ sls invoke local --function demo
-```
+"""
+$ sls invoke local --function auth0_handler
+"""
 ### Deploy to aws
-```
-$ serverless deploy
-```
+"""
+$ sls deploy
+"""
 *** NOTE ***
-```
-Don't forget to make env.yml in the root directory according as env.example before deploying to aws
-```# Serverless-Auth0-Handler
+"""
+Make sure to make env.yml in the root directory before deploying to aws and set your environment variables according as env.example 
+"""

@@ -1,5 +1,4 @@
-org: userstar713
-app: myapp
+
 service: serverless-auth0-handler
 
 plugins:

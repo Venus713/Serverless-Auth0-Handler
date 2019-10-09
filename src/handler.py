@@ -2,108 +2,122 @@ import os
 import json
 import boto3
 import http.client, urllib.parse
+from typing import Tuple
 from src.response import return_success, return_failure
-   
-AUTH0_CALLBACK_URL = os.environ.get("AUTH0_CALLBACK_URL")
-AUTH0_CLIENT_ID = os.environ.get("AUTH0_CLIENT_ID")
-AUTH0_CLIENT_SECRET = os.environ.get("AUTH0_CLIENT_SECRET")
-AUTH0_DOMAIN = os.environ.get("AUTH0_DOMAIN")
-TABLE_NAME = os.environ.get('TABLE_NAME')
 
-conn = http.client.HTTPSConnection(AUTH0_DOMAIN)
 
-table = boto3.resource('dynamodb', region_name="us-east-1").Table(TABLE_NAME)
+class Settings:
+    AUTH0_CALLBACK_URL = os.environ.get("AUTH0_CALLBACK_URL")
+    AUTH0_CLIENT_ID = os.environ.get("AUTH0_CLIENT_ID")
+    AUTH0_CLIENT_SECRET = os.environ.get("AUTH0_CLIENT_SECRET")
+    AUTH0_DOMAIN = os.environ.get("AUTH0_DOMAIN")
+    TABLE_NAME = os.environ.get('TABLE_NAME')
 
-def index(event: dict, context):
-    
-    param = event.get('queryStringParameters', {})
-    if param:
-        AUTHORIZATION_CODE = param['code']
-        STATE = param['state']
 
-        token = get_token(AUTHORIZATION_CODE)
-        user_profile = get_user_profile(token)
-        
-        pk = 'user_profile'
-        sk = user_profile['sub']
+class Auth0:
+    conn = http.client.HTTPSConnection(Settings.AUTH0_DOMAIN)
 
-        entity = {'pk': pk, 'sk': sk, **user_profile}
+    @classmethod
+    def get_token(cls, code: str) -> dict:
+        """Getting tokens
+        """
+        payload = {
+            "grant_type": "authorization_code",
+            "client_id": Settings.AUTH0_CLIENT_ID,
+            "client_secret": Settings.AUTH0_CLIENT_SECRET,
+            "code": code,
+            "redirect_uri": Settings.AUTH0_CALLBACK_URL
+        }
 
-        print(entity)
-        resp = table.get_item(
+        headers = {
+            'Content-Type': "application/x-www-form-urlencoded"
+        }
+
+        body = urllib.parse.urlencode(payload)
+        cls.conn.request("POST", "/oauth/token", body, headers)
+
+        response = cls.conn.getresponse()
+        data = response.read()
+
+        results = json.loads(data.decode("utf-8"))
+        return results
+
+    @classmethod
+    def get_user_profile(cls, code: str) -> dict:
+        """Getting User Profile
+        """
+        token = cls.get_token(code)
+        if token.get('id_token') is None or token.get('access_token') is None:
+            return None
+
+        body = json.dumps({
+            'id_token': token.get('id_token')
+        })
+
+        headers = {
+            'Authorization': 'Bearer {}'.format(token.get('access_token')),
+            'Content-Type': 'application/json'
+        }
+
+        cls.conn.request("GET", "/userinfo", body, headers)
+        response = cls.conn.getresponse()
+        data = response.read()
+        results = json.loads(data.decode("utf-8"))
+        return results
+
+
+class Profile:
+    table = boto3.resource('dynamodb', region_name="us-east-1").Table(Settings.TABLE_NAME)
+    PARTITION_KEY = 'user_profile'
+
+    @classmethod
+    def get_item(cls, sk: str) -> dict:
+        response = cls.table.get_item(
             Key={
-                'pk': entity.get('pk'),
-                'sk': entity.get('sk')
+                'pk': cls.PARTITION_KEY,
+                'sk': sk
             }
         )
-      
-        item = resp.get('Item')
+        return response.get('Item')
 
-        if item is None:
-            """
-            store user_info to UserTable
-            """
-            try:
-                results = table.put_item(
-                    Item=entity
-                )
-                return return_success({"status": True, "data": user_profile})
-                
-            except Exception as e:
-                print(str(e))
-                return return_failure({"status": False, "msg": str(e)})
-        else:
-            """
-            retrieve user_info from UserTable
-            """
-            results = item
-            return return_success(results)
+    @classmethod
+    def put_item(cls, sk: str, item: dict):
+        item.update({
+            'pk': cls.PARTITION_KEY,
+            'sk': sk
+        })
+        try:
+            cls.table.put_item(Item=item)
+            return True
+        except Exception as e:
+            print(str(e))
+            return False
+
+    @classmethod
+    def get_or_create(cls, item: dict) -> Tuple[dict, bool]:
+        if item.get('sub') is None:
+            return False, None
         
-    else:
-        fail_msg = "Oops, Invalid Request!!!"
-        return return_failure(fail_msg)
+        profile = cls.get_item(item['sub'])
+        if profile is not None:
+            # TODO: Need to hide pk and sk?
+            # item.pop('pk')
+            # item.pop('sk')
+            return profile, False
+        else:
+            status = cls.put_item(item['sub'], item)
+            return item if status else None, status
 
-def get_token(authorization_code):
-    """
-    Getting tokens
-    """
-    payload = {
-        "grant_type": "authorization_code",
-        "client_id": AUTH0_CLIENT_ID,
-        "client_secret": AUTH0_CLIENT_SECRET,
-        "code": authorization_code,
-        "redirect_uri": AUTH0_CALLBACK_URL
-    }
-    headers = {
-        'Content-Type': "application/x-www-form-urlencoded"
-    }
-    body = urllib.parse.urlencode(payload)
-    conn.request("POST", "/oauth/token", body, headers)
 
-    res = conn.getresponse()
-    data = res.read()
+def index(event: dict, context):
+    param = event.get('queryStringParameters', None)
+    if param is None or param.get('code') is None:
+        msg = "Oops, Invalid Request!!!"
+        # TODO: Maybe need to show some permission denied?
+        return return_failure({"status": False, "msg": msg})
 
-    results = json.loads(data.decode("utf-8"))
-    return results
-
-def get_user_profile(token):
-    """
-    Getting User_Profile
-    """
-    if token is None:
-        return return_failure({"fail_msg": "Invalid token!!!"})
-
-    id_token = token.get('id_token', None)
-    payload = {
-        'id_token': id_token
-    }
-    headers = {
-        'Authorization': 'Bearer {}'.format(token.get('access_token')),
-        'Content-Type': 'application/json'
-    }
-    body = json.dumps(payload)
-    conn.request("GET", "/userinfo", body, headers)
-    res = conn.getresponse()
-    data = res.read()
-    results = json.loads(data.decode("utf-8"))
-    return results
+    user_profile = Auth0.get_user_profile(param['code'])
+    item, created = Profile.get_or_create(user_profile)
+    # TODO: You will need to redirect customers to a specific url here.
+    return return_success({
+        "status": True, "created?": created, "data": item})
